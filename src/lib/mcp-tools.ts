@@ -3,16 +3,23 @@ import { z } from "zod";
 import { getDashboardSummary } from "@/lib/analytics";
 import { hasSupabaseAdminEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { demoStores, demoSummary } from "@/lib/mock-data";
+
+const NO_DB = {
+  content: [{ type: "text" as const, text: "Error: Database not configured. Set NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY." }],
+  isError: true,
+};
+
+function dbError(msg: string) {
+  return {
+    content: [{ type: "text" as const, text: `Error: ${msg}` }],
+    isError: true,
+  };
+}
 
 export function registerAllTools(server: McpServer) {
   // 1. list_stores
   server.tool("list_stores", "List all Prince Oil stores with their IDs and names", async () => {
-    if (!hasSupabaseAdminEnv()) {
-      return {
-        content: [{ type: "text", text: JSON.stringify(demoStores, null, 2) }],
-      };
-    }
+    if (!hasSupabaseAdminEnv()) return NO_DB;
 
     const supabase = createAdminClient();
     const { data, error } = await supabase
@@ -20,12 +27,7 @@ export function registerAllTools(server: McpServer) {
       .select("id, name, store_identifier, region")
       .order("name");
 
-    if (error) {
-      return {
-        content: [{ type: "text", text: JSON.stringify(demoStores, null, 2) }],
-      };
-    }
-
+    if (error) return dbError(error.message);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   });
 
@@ -39,8 +41,12 @@ export function registerAllTools(server: McpServer) {
       endDate: z.string().optional().describe("End date YYYY-MM-DD"),
     },
     async ({ storeId, startDate, endDate }) => {
-      const summary = await getDashboardSummary({ storeId, startDate, endDate });
-      return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+      try {
+        const summary = await getDashboardSummary({ storeId, startDate, endDate });
+        return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+      } catch (e) {
+        return dbError((e as Error).message);
+      }
     }
   );
 
@@ -54,12 +60,7 @@ export function registerAllTools(server: McpServer) {
       orderBy: z.enum(["sales", "margin", "units"]).optional().describe("Sort order (default: sales)"),
     },
     async ({ storeId, limit = 10, orderBy = "sales" }) => {
-      if (!hasSupabaseAdminEnv()) {
-        const products = [...demoSummary.topProducts]
-          .sort((a, b) => b[orderBy as keyof typeof a] as number - (a[orderBy as keyof typeof a] as number))
-          .slice(0, limit);
-        return { content: [{ type: "text", text: JSON.stringify(products, null, 2) }] };
-      }
+      if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
       let query = supabase
@@ -71,12 +72,7 @@ export function registerAllTools(server: McpServer) {
       if (storeId) query = query.eq("store_id", storeId);
 
       const { data, error } = await query;
-      if (error) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(demoSummary.topProducts.slice(0, limit), null, 2) }],
-        };
-      }
-
+      if (error) return dbError(error.message);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );
@@ -91,11 +87,7 @@ export function registerAllTools(server: McpServer) {
       endDate: z.string().optional().describe("End date YYYY-MM-DD"),
     },
     async ({ storeId, startDate, endDate }) => {
-      if (!hasSupabaseAdminEnv()) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(demoSummary.categoryPerformance, null, 2) }],
-        };
-      }
+      if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
       const { data, error } = await supabase.rpc("category_performance", {
@@ -104,12 +96,7 @@ export function registerAllTools(server: McpServer) {
         p_end_date: endDate || null,
       });
 
-      if (error) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(demoSummary.categoryPerformance, null, 2) }],
-        };
-      }
-
+      if (error) return dbError(error.message);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );
@@ -123,11 +110,7 @@ export function registerAllTools(server: McpServer) {
       limit: z.number().int().min(1).max(100).optional().describe("Max items to return (default 25)"),
     },
     async ({ storeId, limit = 25 }) => {
-      if (!hasSupabaseAdminEnv()) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(demoSummary.negativeMarginSkus.slice(0, limit), null, 2) }],
-        };
-      }
+      if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
       let query = supabase
@@ -135,17 +118,12 @@ export function registerAllTools(server: McpServer) {
         .select("sku, product_name, store_id, sales, margin, margin_pct")
         .lt("margin", 0)
         .order("margin", { ascending: true })
-        .limit(limit); // cap rows to prevent large result sets
+        .limit(limit);
 
       if (storeId) query = query.eq("store_id", storeId);
 
       const { data, error } = await query;
-      if (error) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(demoSummary.negativeMarginSkus, null, 2) }],
-        };
-      }
-
+      if (error) return dbError(error.message);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );
@@ -159,18 +137,7 @@ export function registerAllTools(server: McpServer) {
       endDate: z.string().optional().describe("End date YYYY-MM-DD"),
     },
     async ({ startDate, endDate }) => {
-      if (!hasSupabaseAdminEnv()) {
-        const kpis = demoSummary.kpis;
-        const avg = {
-          avg_daily_sales: Math.round(kpis.total_sales / 30),
-          avg_margin_pct: kpis.margin_pct,
-          avg_transactions_per_day: Math.round(kpis.transaction_count / 30),
-          network_total_sales: kpis.total_sales,
-          network_total_margin: kpis.total_margin,
-          negative_margin_skus: kpis.negative_margin_skus,
-        };
-        return { content: [{ type: "text", text: JSON.stringify(avg, null, 2) }] };
-      }
+      if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
       const { data, error } = await supabase.rpc("network_averages", {
@@ -178,26 +145,7 @@ export function registerAllTools(server: McpServer) {
         p_end_date: endDate || null,
       });
 
-      if (error) {
-        const kpis = demoSummary.kpis;
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  avg_margin_pct: kpis.margin_pct,
-                  network_total_sales: kpis.total_sales,
-                  network_total_margin: kpis.total_margin,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
+      if (error) return dbError(error.message);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );
@@ -222,7 +170,7 @@ export function registerAllTools(server: McpServer) {
       );
 
       if (!res.ok) {
-        return { content: [{ type: "text", text: `Simulation error: ${res.statusText}` }] };
+        return dbError(`Simulation request failed: ${res.statusText}`);
       }
 
       const data = await res.json();

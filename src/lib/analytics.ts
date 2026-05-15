@@ -1,6 +1,21 @@
-import { demoSummary } from "@/lib/mock-data";
 import { hasSupabaseAdminEnv } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
+
+export type DashboardSummary = {
+  kpis: {
+    total_sales: number;
+    total_margin: number;
+    margin_pct: number;
+    transaction_count: number;
+    unit_count: number;
+    negative_margin_skus: number;
+  };
+  salesTrend: { business_date: string; sales: number; margin: number }[];
+  topProducts: { sku: string; product_name: string; sales: number; margin: number; units: number }[];
+  categoryPerformance: { category_name: string; sales: number; margin: number; margin_pct: number }[];
+  storeComparison: { store_name: string; sales: number; margin: number; margin_pct: number }[];
+  negativeMarginSkus: { sku: string; product_name: string; sales: number; margin: number; margin_pct: number }[];
+};
 
 export type DashboardFilters = {
   storeId?: string;
@@ -8,11 +23,9 @@ export type DashboardFilters = {
   endDate?: string;
 };
 
-export type DashboardSummary = typeof demoSummary;
-
 export async function getDashboardSummary(filters: DashboardFilters = {}): Promise<DashboardSummary> {
   if (!hasSupabaseAdminEnv()) {
-    return demoSummary;
+    throw new Error("Database not configured. Set SUPABASE_SERVICE_ROLE_KEY to connect.");
   }
 
   const supabase = createAdminClient();
@@ -23,8 +36,8 @@ export async function getDashboardSummary(filters: DashboardFilters = {}): Promi
   });
 
   if (error) {
-    console.error("dashboard_summary failed", error);
-    return demoSummary;
+    console.error("dashboard_summary RPC failed", error);
+    throw new Error(`Dashboard query failed: ${error.message}`);
   }
 
   return data as DashboardSummary;
