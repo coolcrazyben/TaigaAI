@@ -13,6 +13,8 @@ const tools = [
   { name: "get_category_performance", description: "Sales and margin by category" },
   { name: "get_negative_margin_items", description: "Products losing money — pricing opportunities" },
   { name: "get_network_averages", description: "Network-wide benchmark averages" },
+  { name: "get_fuel_summary", description: "Fuel KPIs per store: gallons pumped, fuel sales, margin, retail/cost per gallon" },
+  { name: "get_fuel_daily_trend", description: "Daily fuel volume and sales trends — spot day-of-week patterns" },
   { name: "simulate_price_change", description: "Forecast impact of a price change using elasticity" },
 ];
 
@@ -21,6 +23,8 @@ const examplePrompts = [
   "Which store had the highest margin last month?",
   "Show me our top 5 products by sales.",
   "Are there any products losing money across the network?",
+  "How many gallons did Newton Junction pump this month?",
+  "Which store has the best fuel margin per gallon?",
   "What would happen if I raised Newport Special prices by $0.25?",
 ];
 

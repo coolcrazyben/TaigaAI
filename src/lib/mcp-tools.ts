@@ -172,7 +172,85 @@ export function registerAllTools(server: McpServer) {
     }
   );
 
-  // 7. simulate_price_change
+  // 8. get_fuel_summary
+  server.tool(
+    "get_fuel_summary",
+    "Get fuel sales KPIs per store: gallons pumped, fuel sales dollars, fuel transactions, fuel margin, and fuel retail/cost per gallon",
+    {
+      storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
+      dateRange: z.string().optional().describe("Month key e.g. '2026-05' or full range '2026-05-01 to 2026-05-31'"),
+    },
+    async ({ storeId, dateRange }) => {
+      if (!hasSupabaseAdminEnv()) return NO_DB;
+
+      const supabase = createAdminClient();
+      let query = supabase
+        .from("transaction_summary")
+        .select(
+          "store_id, date_range, gallons_pumped, fuel_sales, fuel_transactions, " +
+          "fuel_retail, listed_fuel_retail, fuel_cost, fuel_margin, listed_fuel_margin, " +
+          "inside_fuel_sales, outside_fuel_sales, inside_fuel_transactions, " +
+          "outside_fuel_transactions, inside_only_fuel_transactions, outside_only_fuel_transactions, " +
+          "total_fuel_actual_retail, total_fuel_listed_retail"
+        )
+        .order("date_range", { ascending: false })
+        .limit(50);
+
+      if (storeId) query = query.eq("store_id", storeId);
+      if (dateRange) query = query.ilike("date_range", `${dateRange}%`);
+
+      const { data, error } = await query;
+      if (error) return dbError(error.message);
+
+      // Compute cents-per-gallon labels where data is available
+      const enriched = (data ?? []).map((r) => {
+        const row = r as unknown as Record<string, unknown>;
+        return {
+          ...row,
+          fuel_margin_cpp: row.fuel_margin ? `$${Number(row.fuel_margin).toFixed(4)}/gal` : null,
+          fuel_retail_cpp: row.fuel_retail ? `$${Number(row.fuel_retail).toFixed(4)}/gal` : null,
+          fuel_cost_cpp: row.fuel_cost ? `$${Number(row.fuel_cost).toFixed(4)}/gal` : null,
+        };
+      });
+
+      return { content: [{ type: "text", text: JSON.stringify(enriched, null, 2) }] };
+    }
+  );
+
+  // 9. get_fuel_daily_trend
+  server.tool(
+    "get_fuel_daily_trend",
+    "Get daily fuel volume and sales trends across stores — useful for spotting day-of-week patterns or traffic drops",
+    {
+      storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
+      startDate: z.string().optional().describe("Start date YYYY-MM-DD"),
+      endDate: z.string().optional().describe("End date YYYY-MM-DD"),
+      limit: z.number().int().min(1).max(365).optional().describe("Number of days to return (default 30)"),
+    },
+    async ({ storeId, startDate, endDate, limit = 30 }) => {
+      if (!hasSupabaseAdminEnv()) return NO_DB;
+
+      const supabase = createAdminClient();
+      let query = supabase
+        .from("transaction_daily")
+        .select(
+          "store_id, business_date, gallons_pumped, fuel_sales, fuel_transactions, " +
+          "fuel_retail, fuel_cost, fuel_margin, inside_fuel_sales, outside_fuel_sales"
+        )
+        .order("business_date", { ascending: false })
+        .limit(limit);
+
+      if (storeId) query = query.eq("store_id", storeId);
+      if (startDate) query = query.gte("business_date", startDate);
+      if (endDate) query = query.lte("business_date", endDate);
+
+      const { data, error } = await query;
+      if (error) return dbError(error.message);
+      return { content: [{ type: "text", text: JSON.stringify(data ?? [], null, 2) }] };
+    }
+  );
+
+  // 10. simulate_price_change
   server.tool(
     "simulate_price_change",
     "Simulate the impact of a price change on a product — forecasts unit volume, sales, and margin using price elasticity",
