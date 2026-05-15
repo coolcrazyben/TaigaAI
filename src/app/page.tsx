@@ -1,65 +1,118 @@
-import Image from "next/image";
+import { AppShell } from "@/components/app-shell";
+import Link from "next/link";
+
+const SERVER_URL =
+  process.env.NEXT_PUBLIC_APP_URL
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/api/mcp`
+    : "https://your-app.vercel.app/api/mcp";
+
+const tools = [
+  { name: "list_stores", description: "All Prince Oil locations with IDs" },
+  { name: "get_dashboard_summary", description: "KPIs, trends, and category breakdown (filter by store/date)" },
+  { name: "get_top_products", description: "Best-selling or highest-margin products" },
+  { name: "get_category_performance", description: "Sales and margin by category" },
+  { name: "get_negative_margin_items", description: "Products losing money — pricing opportunities" },
+  { name: "get_network_averages", description: "Network-wide benchmark averages" },
+  { name: "simulate_price_change", description: "Forecast impact of a price change using elasticity" },
+];
+
+const examplePrompts = [
+  "What stores do you have data on?",
+  "Which store had the highest margin last month?",
+  "Show me our top 5 products by sales.",
+  "Are there any products losing money across the network?",
+  "What would happen if I raised Newport Special prices by $0.25?",
+];
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <AppShell>
+      <div className="max-w-2xl mx-auto px-6 py-12 space-y-10">
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-white">Prince Oil Analytics MCP Server</h1>
+          <p className="mt-2 text-green-200/70 text-sm leading-relaxed">
+            Connect your Claude Desktop (or any MCP client) to this server to query store analytics,
+            top products, margins, and pricing simulations — directly in your AI chat.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Step 1 */}
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-green-500">Step 1 — Server URL</h2>
+          <div className="rounded-lg bg-[#0a1a0e] border border-green-900 px-4 py-3 font-mono text-sm text-green-300 select-all break-all">
+            {SERVER_URL}
+          </div>
+        </section>
+
+        {/* Step 2 */}
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-green-500">Step 2 — Claude Desktop Config</h2>
+          <p className="text-xs text-green-200/60">
+            Open <code className="text-green-300">claude_desktop_config.json</code> and add:
+          </p>
+          <pre className="rounded-lg bg-[#0a1a0e] border border-green-900 px-4 py-3 font-mono text-xs text-green-200 overflow-x-auto whitespace-pre-wrap">{`{
+  "mcpServers": {
+    "prince-oil": {
+      "type": "http",
+      "url": "${SERVER_URL}"
+    }
+  }
+}`}</pre>
+          <p className="text-xs text-green-200/50">
+            Config file location:{" "}
+            <span className="text-green-300">~/Library/Application Support/Claude/claude_desktop_config.json</span>{" "}
+            (macOS) or{" "}
+            <span className="text-green-300">%APPDATA%\Claude\claude_desktop_config.json</span> (Windows)
+          </p>
+        </section>
+
+        {/* Step 3 */}
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-green-500">Step 3 — Ask Questions</h2>
+          <p className="text-xs text-green-200/60">Restart Claude Desktop, then try:</p>
+          <ul className="space-y-1">
+            {examplePrompts.map((p) => (
+              <li key={p} className="text-xs text-green-200/80 pl-3 border-l border-green-800">
+                "{p}"
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {/* Available tools */}
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-green-500">Available Tools</h2>
+          <div className="divide-y divide-green-950 rounded-lg border border-green-900 overflow-hidden">
+            {tools.map((t) => (
+              <div key={t.name} className="px-4 py-2.5 bg-[#0a1a0e] flex gap-3">
+                <code className="text-xs text-green-400 font-mono shrink-0 pt-0.5">{t.name}</code>
+                <span className="text-xs text-green-200/60">{t.description}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Test with Inspector */}
+        <section className="space-y-1">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-green-500">Test Locally</h2>
+          <pre className="rounded-lg bg-[#0a1a0e] border border-green-900 px-4 py-3 font-mono text-xs text-green-200">
+            npx @modelcontextprotocol/inspector http://localhost:3000/api/mcp
+          </pre>
+        </section>
+
+        {/* Footer link */}
+        <div className="pt-2 text-xs text-green-800">
+          Need to ingest data?{" "}
+          <Link href="/upload" className="text-green-600 hover:text-green-400 underline">
+            Upload a CSV
+          </Link>
+          {" · "}
+          <Link href="/data" className="text-green-600 hover:text-green-400 underline">
+            View raw data
+          </Link>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

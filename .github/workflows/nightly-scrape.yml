@@ -1,0 +1,62 @@
+name: Nightly Taiga Scrape + Ingest
+
+on:
+  schedule:
+    # 3:00 AM CT = 9:00 AM UTC (CDT, UTC-6)
+    - cron: "0 9 * * *"
+  workflow_dispatch:  # Trigger manually from GitHub Actions UI
+
+jobs:
+  scrape-and-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create downloads directory
+        run: mkdir -p downloads
+
+      - name: Run Taiga API scraper
+        env:
+          TAIGA_EMAIL: ${{ secrets.TAIGA_EMAIL }}
+          TAIGA_PASSWORD: ${{ secrets.TAIGA_PASSWORD }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DOWNLOAD_DIR: downloads
+          LOG_FILE: scraper.log
+        run: node scraper/index.js --months 2
+
+      - name: Commit scraper log
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add scraper.log
+          git diff --cached --quiet || git commit -m "chore: nightly scraper log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
+
+      - name: Upload raw JSON artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: taiga-data-${{ github.run_id }}
+          path: downloads/
+          retention-days: 7
+
+      - name: Upload scraper log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scraper-log-${{ github.run_id }}
+          path: scraper.log
+          retention-days: 30
