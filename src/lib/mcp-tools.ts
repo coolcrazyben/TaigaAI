@@ -58,8 +58,9 @@ export function registerAllTools(server: McpServer) {
       storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
       limit: z.number().int().min(1).max(50).optional().describe("Number of products to return (default 10)"),
       orderBy: z.enum(["sales", "margin", "units"]).optional().describe("Sort order (default: sales)"),
+      dateRange: z.string().optional().describe("Month key e.g. '2026-05' or full range '2026-05-01 to 2026-05-31'. Omit for all-time data."),
     },
-    async ({ storeId, limit = 10, orderBy = "sales" }) => {
+    async ({ storeId, limit = 10, orderBy = "sales", dateRange }) => {
       if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const colMap: Record<string, string> = {
@@ -71,15 +72,22 @@ export function registerAllTools(server: McpServer) {
       const supabase = createAdminClient();
       let query = supabase
         .from("merchandise_product")
-        .select("sku, product_name, store_id, total_sales_amount, total_margin_dollars, units_sold")
+        .select("sku, product_name, store_id, date_range, total_sales_amount, total_margin_dollars, units_sold")
         .order(colMap[orderBy], { ascending: false })
         .limit(limit);
 
       if (storeId) query = query.eq("store_id", storeId);
+      if (dateRange) query = query.ilike("date_range", `${dateRange}%`);
 
       const { data, error } = await query;
       if (error) return dbError(error.message);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+
+      const ranges = [...new Set((data ?? []).map((r) => (r as Record<string, unknown>).date_range).filter(Boolean))].sort();
+      const meta = {
+        data_covers: ranges.length > 0 ? `${ranges[0]} to ${ranges[ranges.length - 1]}` : "unknown",
+        date_ranges_included: ranges,
+      };
+      return { content: [{ type: "text", text: JSON.stringify({ meta, data }, null, 2) }] };
     }
   );
 
@@ -89,28 +97,33 @@ export function registerAllTools(server: McpServer) {
     "Get sales and margin breakdown by product category",
     {
       storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
+      dateRange: z.string().optional().describe("Month key e.g. '2026-05' or full range '2026-05-01 to 2026-05-31'. Omit for all-time data."),
     },
-    async ({ storeId }) => {
+    async ({ storeId, dateRange }) => {
       if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
       let query = supabase
         .from("merchandise_product")
-        .select("category, total_sales_amount, total_margin_dollars")
+        .select("category, date_range, total_sales_amount, total_margin_dollars")
         .limit(500);
 
       if (storeId) query = query.eq("store_id", storeId);
+      if (dateRange) query = query.ilike("date_range", `${dateRange}%`);
 
       const { data, error } = await query;
       if (error) return dbError(error.message);
 
       // Aggregate by category in JS (no GROUP BY in Supabase JS client)
       const catMap: Record<string, { sales: number; margin: number }> = {};
+      const allRanges = new Set<string>();
       for (const r of data ?? []) {
-        const cat = r.category ?? "Uncategorized";
+        const cat = (r as Record<string, unknown>).category as string ?? "Uncategorized";
         if (!catMap[cat]) catMap[cat] = { sales: 0, margin: 0 };
-        catMap[cat].sales += Number(r.total_sales_amount ?? 0);
-        catMap[cat].margin += Number(r.total_margin_dollars ?? 0);
+        catMap[cat].sales += Number((r as Record<string, unknown>).total_sales_amount ?? 0);
+        catMap[cat].margin += Number((r as Record<string, unknown>).total_margin_dollars ?? 0);
+        const dr = (r as Record<string, unknown>).date_range as string;
+        if (dr) allRanges.add(dr);
       }
       const result = Object.entries(catMap)
         .map(([category_name, { sales, margin }]) => ({
@@ -121,7 +134,12 @@ export function registerAllTools(server: McpServer) {
         }))
         .sort((a, b) => b.sales - a.sales);
 
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      const ranges = [...allRanges].sort();
+      const meta = {
+        data_covers: ranges.length > 0 ? `${ranges[0]} to ${ranges[ranges.length - 1]}` : "unknown",
+        date_ranges_included: ranges,
+      };
+      return { content: [{ type: "text", text: JSON.stringify({ meta, result }, null, 2) }] };
     }
   );
 
@@ -132,27 +150,79 @@ export function registerAllTools(server: McpServer) {
     {
       storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
       limit: z.number().int().min(1).max(100).optional().describe("Max items to return (default 25)"),
+      dateRange: z.string().optional().describe("Month key e.g. '2026-05' or full range '2026-05-01 to 2026-05-31'. Omit for all-time data."),
     },
-    async ({ storeId, limit = 25 }) => {
+    async ({ storeId, limit = 25, dateRange }) => {
       if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
       let query = supabase
         .from("merchandise_product")
-        .select("sku, product_name, store_id, total_sales_amount, total_margin_dollars, total_margin")
+        .select("sku, product_name, store_id, date_range, total_sales_amount, total_margin_dollars, total_margin")
         .lt("total_margin_dollars", 0)
         .order("total_margin_dollars", { ascending: true })
         .limit(limit);
 
       if (storeId) query = query.eq("store_id", storeId);
+      if (dateRange) query = query.ilike("date_range", `${dateRange}%`);
 
       const { data, error } = await query;
       if (error) return dbError(error.message);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+
+      const ranges = [...new Set((data ?? []).map((r) => (r as Record<string, unknown>).date_range).filter(Boolean))].sort() as string[];
+      const meta = {
+        data_covers: ranges.length > 0 ? `${ranges[0]} to ${ranges[ranges.length - 1]}` : "unknown",
+        date_ranges_included: ranges,
+      };
+      return { content: [{ type: "text", text: JSON.stringify({ meta, data }, null, 2) }] };
     }
   );
 
-  // 6. get_network_averages — queries the network_averages VIEW (not an RPC)
+  // 6. get_data_info
+  server.tool(
+    "get_data_info",
+    "Get metadata about what data is available: date ranges, stores, and coverage. Call this first if you don't know what period the data covers.",
+    {},
+    async () => {
+      if (!hasSupabaseAdminEnv()) return NO_DB;
+
+      const supabase = createAdminClient();
+
+      const [txResult, dailyResult, merchResult] = await Promise.all([
+        supabase.from("transaction_summary").select("date_range").order("date_range", { ascending: true }),
+        supabase.from("transaction_daily").select("business_date").order("business_date", { ascending: true }),
+        supabase.from("merchandise_product").select("date_range").order("date_range", { ascending: true }),
+      ]);
+
+      const txRanges = [...new Set((txResult.data ?? []).map((r) => r.date_range).filter(Boolean))].sort() as string[];
+      const dailyDates = (dailyResult.data ?? []).map((r) => r.business_date).filter(Boolean).sort() as string[];
+      const merchRanges = [...new Set((merchResult.data ?? []).map((r) => (r as Record<string, unknown>).date_range).filter(Boolean))].sort() as string[];
+
+      const summary = {
+        transaction_summary: {
+          earliest: txRanges[0] ?? null,
+          latest: txRanges[txRanges.length - 1] ?? null,
+          total_months: txRanges.length,
+          all_date_ranges: txRanges,
+        },
+        transaction_daily: {
+          earliest_date: dailyDates[0] ?? null,
+          latest_date: dailyDates[dailyDates.length - 1] ?? null,
+          total_days: dailyDates.length,
+        },
+        merchandise_product: {
+          earliest: merchRanges[0] ?? null,
+          latest: merchRanges[merchRanges.length - 1] ?? null,
+          total_months: merchRanges.length,
+          all_date_ranges: merchRanges,
+        },
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+    }
+  );
+
+  // 7. get_network_averages — queries the network_averages VIEW (not an RPC)
   server.tool(
     "get_network_averages",
     "Get network-wide benchmark averages across all Prince Oil stores",

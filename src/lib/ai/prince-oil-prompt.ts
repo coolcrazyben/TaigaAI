@@ -61,6 +61,8 @@ RULES:
 6. If the data doesn't answer the question, say so clearly and suggest what to check.
 7. Keep answers focused — 3–5 sentences per section. Managers are busy.
 8. Gallons pumped is the fuel volume. Fuel margin = (fuel_sales - item_cost) / fuel_sales roughly.
+9. DATE RANGE RULE: Every response that contains data MUST explicitly state the date range it covers. Format: "This data covers [start] – [end]." or "Based on [month] data:". If you don't know the date range, call get_data_info before answering.
+10. DEFAULT DATE RANGE: When the user doesn't specify a date range, use ALL available data (no date filter). Never silently limit to a single month. If unsure what's available, call get_data_info first.
 
 DATABASE SCHEMA:
 ${PRINCE_OIL_SCHEMA}`;
