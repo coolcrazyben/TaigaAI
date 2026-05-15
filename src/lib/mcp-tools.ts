@@ -24,8 +24,8 @@ export function registerAllTools(server: McpServer) {
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from("stores")
-      .select("id, name, store_identifier, region")
-      .order("name");
+      .select("store_id, store_name")
+      .order("store_name");
 
     if (error) return dbError(error.message);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -62,11 +62,17 @@ export function registerAllTools(server: McpServer) {
     async ({ storeId, limit = 10, orderBy = "sales" }) => {
       if (!hasSupabaseAdminEnv()) return NO_DB;
 
+      const colMap: Record<string, string> = {
+        sales: "total_sales_amount",
+        margin: "total_margin_dollars",
+        units: "units_sold",
+      };
+
       const supabase = createAdminClient();
       let query = supabase
-        .from("merchandise_summary")
-        .select("sku, product_name, store_id, sales, margin, units")
-        .order(orderBy, { ascending: false })
+        .from("merchandise_product")
+        .select("sku, product_name, store_id, total_sales_amount, total_margin_dollars, units_sold")
+        .order(colMap[orderBy], { ascending: false })
         .limit(limit);
 
       if (storeId) query = query.eq("store_id", storeId);
@@ -83,21 +89,39 @@ export function registerAllTools(server: McpServer) {
     "Get sales and margin breakdown by product category",
     {
       storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
-      startDate: z.string().optional().describe("Start date YYYY-MM-DD"),
-      endDate: z.string().optional().describe("End date YYYY-MM-DD"),
     },
-    async ({ storeId, startDate, endDate }) => {
+    async ({ storeId }) => {
       if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
-      const { data, error } = await supabase.rpc("category_performance", {
-        p_store_id: storeId || null,
-        p_start_date: startDate || null,
-        p_end_date: endDate || null,
-      });
+      let query = supabase
+        .from("merchandise_product")
+        .select("category, total_sales_amount, total_margin_dollars")
+        .limit(500);
 
+      if (storeId) query = query.eq("store_id", storeId);
+
+      const { data, error } = await query;
       if (error) return dbError(error.message);
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+
+      // Aggregate by category in JS (no GROUP BY in Supabase JS client)
+      const catMap: Record<string, { sales: number; margin: number }> = {};
+      for (const r of data ?? []) {
+        const cat = r.category ?? "Uncategorized";
+        if (!catMap[cat]) catMap[cat] = { sales: 0, margin: 0 };
+        catMap[cat].sales += Number(r.total_sales_amount ?? 0);
+        catMap[cat].margin += Number(r.total_margin_dollars ?? 0);
+      }
+      const result = Object.entries(catMap)
+        .map(([category_name, { sales, margin }]) => ({
+          category_name,
+          sales,
+          margin,
+          margin_pct: sales > 0 ? Math.round((margin / sales) * 10000) / 100 : 0,
+        }))
+        .sort((a, b) => b.sales - a.sales);
+
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -114,10 +138,10 @@ export function registerAllTools(server: McpServer) {
 
       const supabase = createAdminClient();
       let query = supabase
-        .from("merchandise_summary")
-        .select("sku, product_name, store_id, sales, margin, margin_pct")
-        .lt("margin", 0)
-        .order("margin", { ascending: true })
+        .from("merchandise_product")
+        .select("sku, product_name, store_id, total_sales_amount, total_margin_dollars, total_margin")
+        .lt("total_margin_dollars", 0)
+        .order("total_margin_dollars", { ascending: true })
         .limit(limit);
 
       if (storeId) query = query.eq("store_id", storeId);
@@ -128,23 +152,21 @@ export function registerAllTools(server: McpServer) {
     }
   );
 
-  // 6. get_network_averages
+  // 6. get_network_averages — queries the network_averages VIEW (not an RPC)
   server.tool(
     "get_network_averages",
     "Get network-wide benchmark averages across all Prince Oil stores",
     {
-      startDate: z.string().optional().describe("Start date YYYY-MM-DD"),
-      endDate: z.string().optional().describe("End date YYYY-MM-DD"),
+      dateRange: z.string().optional().describe("Date range string to filter e.g. '2026-05-01 to 2026-05-31'"),
     },
-    async ({ startDate, endDate }) => {
+    async ({ dateRange }) => {
       if (!hasSupabaseAdminEnv()) return NO_DB;
 
       const supabase = createAdminClient();
-      const { data, error } = await supabase.rpc("network_averages", {
-        p_start_date: startDate || null,
-        p_end_date: endDate || null,
-      });
+      let query = supabase.from("network_averages").select("*").limit(12);
+      if (dateRange) query = query.eq("date_range", dateRange);
 
+      const { data, error } = await query;
       if (error) return dbError(error.message);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
