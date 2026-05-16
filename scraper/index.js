@@ -14,6 +14,7 @@ import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
 import dotenv from "dotenv";
+import ws from "ws";
 
 dotenv.config({ path: ".env.local", override: true });
 dotenv.config({ path: ".env" });
@@ -32,7 +33,9 @@ const MONTHS_BACK = parseInt(
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
-const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const supabase = SUPABASE_URL && SUPABASE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_KEY, { realtime: { transport: ws } })
+  : null;
 
 if (!EMAIL || !PASSWORD) { console.error("FATAL: TAIGA_EMAIL and TAIGA_PASSWORD required"); process.exit(1); }
 if (!supabase) log("WARNING: Supabase not configured — saving JSON to downloads/ only.");
