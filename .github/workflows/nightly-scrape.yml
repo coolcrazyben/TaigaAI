@@ -27,6 +27,9 @@ jobs:
       - name: Create downloads directory
         run: mkdir -p downloads
 
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
       - name: Run Taiga API scraper
         env:
           TAIGA_EMAIL: ${{ secrets.TAIGA_EMAIL }}

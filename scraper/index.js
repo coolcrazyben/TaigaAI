@@ -15,6 +15,7 @@ import { createClient } from "@supabase/supabase-js";
 import { chromium } from "playwright";
 import dotenv from "dotenv";
 import ws from "ws";
+if (typeof globalThis.WebSocket === "undefined") globalThis.WebSocket = ws;
 
 dotenv.config({ path: ".env.local", override: true });
 dotenv.config({ path: ".env" });
