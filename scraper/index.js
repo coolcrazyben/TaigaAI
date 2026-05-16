@@ -499,50 +499,85 @@ async function batchUpsert(table, records, conflict) {
   return n;
 }
 
+const NUMERIC_DAILY_FIELDS = [
+  "total_transactions","inside_transactions","outside_transactions","fuel_transactions",
+  "inside_only_fuel_transactions","outside_only_fuel_transactions",
+  "sales_total","net_sales_volume","total_sales_tax","gross_amount","net_amount",
+  "inside_sales","inside_sales_wo_fuel","outside_sales","inside_fuel_sales","outside_fuel_sales",
+  "item_retail","item_cost","fuel_sales","gallons_pumped",
+  "total_fuel_actual_retail","total_fuel_listed_retail",
+  "loyalty_transactions","promotion_transactions",
+];
+
 async function upsertTransactionDaily(rows, monthKey) {
   if (!supabase) return 0;
-  const records = [];
+
+  // Deduplicate by store_id+business_date, summing numeric fields.
+  // Taiga CUSTOM queries may return sub-daily rows (e.g. per-shift/register)
+  // that share the same FormattedDate after .slice(0,10).
+  const map = new Map();
   for (const r of rows) {
     if (!r.storeName || !r.formattedDate) continue;
     const bizDate = String(r.formattedDate).slice(0, 10);
-    records.push({
-      store_id: slug(r.storeName), business_date: bizDate, store_number: String(r.storeIdentifier ?? ""),
-      total_transactions:   r.totalTransactions ?? null,
-      inside_transactions:  r.totalInstoreTransactions ?? null,
-      outside_transactions: r.totalOutsideTransactions ?? null,
-      fuel_transactions:    r.totalFuelTransactions ?? null,
-      inside_only_fuel_transactions:  r.instoreFuelOnlyTransactions ?? null,
-      outside_only_fuel_transactions: r.outsideFuelOnlyTransactions ?? null,
-      sales_total:          r.adjustedSalesTotal ?? null,
-      net_sales_volume:     r.netSalesVolume ?? null,
-      total_sales_tax:      r.taxNetAmount ?? null,
-      gross_amount:         r.grossAmount ?? null,
-      net_amount:           r.netAmount ?? null,
-      inside_sales:         r.adjustedTotalInstoreSales ?? null,
-      inside_sales_wo_fuel: r.adjustedTotalInstoreSalesWithoutFuel ?? null,
-      outside_sales:        r.totalOutsideSales ?? null,
-      inside_fuel_sales:    r.totalInstoreFuelSales ?? null,
-      outside_fuel_sales:   r.totalOutsideFuelSales ?? null,
-      item_retail:          r.totalItemRetail ?? null,
-      item_cost:            r.totalItemCost ?? null,
-      total_margin:         r.totalMargin ?? null,
-      fuel_sales:           r.fuelSales ?? null,
-      gallons_pumped:       r.gallonsPumped ?? null,
-      fuel_retail:          r.totalFuelActualRetail && r.gallonsPumped ? r.totalFuelActualRetail / r.gallonsPumped : null,
-      fuel_cost:            r.totalFuelCost && r.gallonsPumped ? r.totalFuelCost / r.gallonsPumped : null,
-      fuel_margin:          r.totalFuelActualMargin ?? null,
-      total_fuel_actual_retail: r.totalFuelActualRetail ?? null,
-      total_fuel_listed_retail: r.totalFuelListedRetail ?? null,
-      average_transaction_value:        r.averageTransactionValue ?? null,
-      average_transaction_value_wo_fuel: r.averageTransactionValueWithoutFuel ?? null,
-      sq_footage:           r.avgSquareFootage ?? null,
-      sales_per_sq_ft:      r.salesPerSquareFootPerTransaction ?? null,
-      loyalty_usage_pct:    r.loyaltyUsedPercentage ?? null,
-      loyalty_transactions: r.loyaltyTransactions ?? null,
-      promotion_usage_pct:  r.promotionUsedPercentage ?? null,
-      promotion_transactions: r.promotionTransactions ?? null,
-    });
+    const key = `${slug(r.storeName)}|${bizDate}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        store_id: slug(r.storeName), business_date: bizDate, store_number: String(r.storeIdentifier ?? ""),
+        total_transactions:   r.totalTransactions ?? 0,
+        inside_transactions:  r.totalInstoreTransactions ?? 0,
+        outside_transactions: r.totalOutsideTransactions ?? 0,
+        fuel_transactions:    r.totalFuelTransactions ?? 0,
+        inside_only_fuel_transactions:  r.instoreFuelOnlyTransactions ?? 0,
+        outside_only_fuel_transactions: r.outsideFuelOnlyTransactions ?? 0,
+        sales_total:          r.adjustedSalesTotal ?? 0,
+        net_sales_volume:     r.netSalesVolume ?? 0,
+        total_sales_tax:      r.taxNetAmount ?? 0,
+        gross_amount:         r.grossAmount ?? 0,
+        net_amount:           r.netAmount ?? 0,
+        inside_sales:         r.adjustedTotalInstoreSales ?? 0,
+        inside_sales_wo_fuel: r.adjustedTotalInstoreSalesWithoutFuel ?? 0,
+        outside_sales:        r.totalOutsideSales ?? 0,
+        inside_fuel_sales:    r.totalInstoreFuelSales ?? 0,
+        outside_fuel_sales:   r.totalOutsideFuelSales ?? 0,
+        item_retail:          r.totalItemRetail ?? 0,
+        item_cost:            r.totalItemCost ?? 0,
+        total_margin:         r.totalMargin ?? null,  // ratio — take last, not sum
+        fuel_sales:           r.fuelSales ?? 0,
+        gallons_pumped:       r.gallonsPumped ?? 0,
+        fuel_margin:          r.totalFuelActualMargin ?? null,
+        total_fuel_actual_retail: r.totalFuelActualRetail ?? 0,
+        total_fuel_listed_retail: r.totalFuelListedRetail ?? 0,
+        average_transaction_value:        r.averageTransactionValue ?? null,
+        average_transaction_value_wo_fuel: r.averageTransactionValueWithoutFuel ?? null,
+        sq_footage:           r.avgSquareFootage ?? null,
+        sales_per_sq_ft:      r.salesPerSquareFootPerTransaction ?? null,
+        loyalty_usage_pct:    r.loyaltyUsedPercentage ?? null,
+        loyalty_transactions: r.loyaltyTransactions ?? 0,
+        promotion_usage_pct:  r.promotionUsedPercentage ?? null,
+        promotion_transactions: r.promotionTransactions ?? 0,
+        _gallons_raw: r.gallonsPumped ?? 0,
+        _fuel_actual_raw: r.totalFuelActualRetail ?? 0,
+        _fuel_cost_raw: r.totalFuelCost ?? 0,
+      });
+    } else {
+      const e = map.get(key);
+      for (const f of NUMERIC_DAILY_FIELDS) e[f] = (e[f] ?? 0) + (r[f] ?? 0);
+      e._gallons_raw     += (r.gallonsPumped ?? 0);
+      e._fuel_actual_raw += (r.totalFuelActualRetail ?? 0);
+      e._fuel_cost_raw   += (r.totalFuelCost ?? 0);
+    }
   }
+
+  const records = [...map.values()].map((e) => {
+    const g = e._gallons_raw;
+    const rec = { ...e };
+    rec.fuel_retail = g > 0 ? e._fuel_actual_raw / g : null;
+    rec.fuel_cost   = g > 0 ? e._fuel_cost_raw / g : null;
+    delete rec._gallons_raw; delete rec._fuel_actual_raw; delete rec._fuel_cost_raw;
+    return rec;
+  });
+
+  log(`  daily deduped: ${rows.length} → ${records.length} rows`);
   return batchUpsert("transaction_daily", records, "store_id,business_date");
 }
 
