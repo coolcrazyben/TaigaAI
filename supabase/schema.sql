@@ -244,27 +244,118 @@ create index if not exists idx_td_date         on transaction_daily (business_da
 create index if not exists idx_mp_store        on merchandise_product (store_id);
 create index if not exists idx_mp_date         on merchandise_product (date_range);
 create index if not exists idx_mp_sku          on merchandise_product (sku);
+-- Analytics improvement indexes (migration 002)
+create index if not exists idx_mp_category     on merchandise_product (category);
+create index if not exists idx_mp_store_period on merchandise_product (store_id, period_start);
+create index if not exists idx_mp_sku_period   on merchandise_product (sku, period_start);
+create index if not exists idx_ts_store_period on transaction_summary (store_id, period_start);
+create index if not exists idx_td_store_bdate  on transaction_daily (store_id, business_date);
 
 -- ─────────────────────────────────────────────
--- 9. Helper view — network averages for quick AI comparisons
+-- 9. Analytics improvements — additive columns (migration 002)
 -- ─────────────────────────────────────────────
+
+-- period_start: enables proper date range queries (parsed from date_range text)
+alter table merchandise_product
+  add column if not exists period_start        date,
+  add column if not exists implied_unit_retail numeric(10,4),
+  add column if not exists implied_unit_cost   numeric(10,4);
+
+alter table transaction_summary
+  add column if not exists period_start date;
+
+-- Backfill period_start — handle both "YYYY-MM" and "YYYY-MM-DD to YYYY-MM-DD" formats
+-- Format 1: "YYYY-MM" → append "-01" to get first of month
+update merchandise_product
+  set period_start = (date_range || '-01')::date
+  where period_start is null and date_range ~ '^\d{4}-\d{2}$';
+
+update transaction_summary
+  set period_start = (date_range || '-01')::date
+  where period_start is null and date_range ~ '^\d{4}-\d{2}$';
+
+-- Format 2: "YYYY-MM-DD to YYYY-MM-DD" → first token is the start date
+update merchandise_product
+  set period_start = (split_part(date_range, ' ', 1))::date
+  where period_start is null and date_range ~ '^\d{4}-\d{2}-\d{2}';
+
+update transaction_summary
+  set period_start = (split_part(date_range, ' ', 1))::date
+  where period_start is null and date_range ~ '^\d{4}-\d{2}-\d{2}';
+
+-- Backfill implied prices from existing aggregates
+update merchandise_product set
+  implied_unit_retail = case when units_sold > 0
+    then round(total_sales_amount / units_sold, 4) end,
+  implied_unit_cost = case when units_sold > 0
+    then round((total_sales_amount - total_margin_dollars) / units_sold, 4) end
+where implied_unit_retail is null;
+
+-- Trigger: auto-compute implied prices on future inserts/updates
+create or replace function compute_implied_prices()
+returns trigger language plpgsql as $$
+begin
+  new.implied_unit_retail := case when new.units_sold > 0
+    then round(new.total_sales_amount / new.units_sold, 4) end;
+  new.implied_unit_cost := case when new.units_sold > 0
+    then round((new.total_sales_amount - new.total_margin_dollars) / new.units_sold, 4) end;
+  return new;
+end;
+$$;
+
+create or replace trigger trg_merch_implied_prices
+  before insert or update on merchandise_product
+  for each row execute function compute_implied_prices();
+
+-- ─────────────────────────────────────────────
+-- 10. Views
+-- ─────────────────────────────────────────────
+
+-- SKU price history: month-over-month implied price deltas per SKU per store
+create or replace view sku_price_history
+  with (security_invoker = true)
+as
+select
+  sku,
+  product_name,
+  brand,
+  category,
+  store_id,
+  date_range,
+  period_start,
+  units_sold,
+  total_sales_amount,
+  implied_unit_retail,
+  implied_unit_cost,
+  lag(implied_unit_retail) over w  as prev_retail,
+  implied_unit_retail
+    - lag(implied_unit_retail) over w as retail_change,
+  implied_unit_cost
+    - lag(implied_unit_cost) over w  as cost_change
+from merchandise_product
+where units_sold > 0
+  and implied_unit_retail is not null
+window w as (partition by sku, store_id order by period_start);
+
+-- Network averages: benchmark KPIs across all stores per period
 drop view if exists network_averages;
 create view network_averages
   with (security_invoker = true)
 as
 select
   date_range,
-  avg(total_transactions)                          as avg_total_transactions,
-  avg(sales_total)                                 as avg_sales_total,
-  avg(total_margin)                                as avg_total_margin,
-  round(avg(total_margin) * 100, 2)               as avg_margin_pct,
-  avg(inside_sales)                                as avg_inside_sales,
-  avg(inside_sales_wo_fuel)                        as avg_inside_sales_wo_fuel,
-  avg(outside_sales)                               as avg_outside_sales,
-  avg(fuel_margin)                                 as avg_fuel_margin,
-  avg(gallons_pumped)                              as avg_gallons_pumped,
-  avg(loyalty_usage_pct)                           as avg_loyalty_usage_pct,
-  avg(promotion_usage_pct)                         as avg_promotion_usage_pct,
-  count(*)                                         as store_count
+  period_start,
+  avg(total_transactions)         as avg_total_transactions,
+  avg(sales_total)                as avg_sales_total,
+  avg(total_margin)               as avg_total_margin,
+  round(avg(total_margin) * 100, 2) as avg_margin_pct,
+  avg(inside_sales)               as avg_inside_sales,
+  avg(inside_sales_wo_fuel)       as avg_inside_sales_wo_fuel,
+  avg(outside_sales)              as avg_outside_sales,
+  avg(fuel_margin)                as avg_fuel_margin,
+  avg(gallons_pumped)             as avg_gallons_pumped,
+  avg(loyalty_usage_pct)          as avg_loyalty_usage_pct,
+  avg(promotion_usage_pct)        as avg_promotion_usage_pct,
+  count(*)                        as store_count
 from transaction_summary
-group by date_range;
+group by date_range, period_start;

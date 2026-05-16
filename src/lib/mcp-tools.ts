@@ -320,7 +320,38 @@ export function registerAllTools(server: McpServer) {
     }
   );
 
-  // 10. simulate_price_change
+  // 10. get_sku_price_history
+  server.tool(
+    "get_sku_price_history",
+    "Get month-over-month implied unit price and cost history for a SKU, with period-over-period change deltas. Useful for tracking price trends and detecting price changes.",
+    {
+      sku: z.string().describe("The SKU to look up"),
+      storeId: z.string().optional().describe("Store ID to filter (omit for all stores)"),
+    },
+    async ({ sku, storeId }) => {
+      if (!hasSupabaseAdminEnv()) return NO_DB;
+
+      const supabase = createAdminClient();
+      let query = supabase
+        .from("sku_price_history")
+        .select(
+          "sku, product_name, brand, category, store_id, date_range, period_start, " +
+          "units_sold, total_sales_amount, implied_unit_retail, implied_unit_cost, " +
+          "prev_retail, retail_change, cost_change"
+        )
+        .eq("sku", sku)
+        .order("period_start", { ascending: true })
+        .order("store_id", { ascending: true });
+
+      if (storeId) query = query.eq("store_id", storeId);
+
+      const { data, error } = await query;
+      if (error) return dbError(error.message);
+      return { content: [{ type: "text", text: JSON.stringify(data ?? [], null, 2) }] };
+    }
+  );
+
+  // 11. simulate_price_change
   server.tool(
     "simulate_price_change",
     "Simulate the impact of a price change on a product — forecasts unit volume, sales, and margin using price elasticity",
