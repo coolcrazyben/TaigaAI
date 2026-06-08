@@ -378,4 +378,63 @@ export function registerAllTools(server: McpServer) {
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     }
   );
+
+  // 12. get_payment_type_summary
+  server.tool(
+    "get_payment_type_summary",
+    "Get credit card vs cash vs other payment type breakdown for fuel and inside/merch sales. " +
+    "Returns tender dollar amounts per payment type (Credit Card, Cash, Debit Card, Fleet Card, etc.) " +
+    "with separate fuel and inside columns. inside_tender = all_tender - fuel_tender.",
+    {
+      storeId:   z.string().optional().describe("Store ID slug to filter (omit for all stores)"),
+      dateRange: z.string().optional().describe("Month in YYYY-MM format (omit for all available months)"),
+    },
+    async ({ storeId, dateRange }) => {
+      if (!hasSupabaseAdminEnv()) return NO_DB;
+      const supabase = createAdminClient();
+
+      let q = supabase
+        .from("payment_type_summary")
+        .select("store_id,date_range,sale_type,payment_type,tender_amount,collected_amount")
+        .order("date_range", { ascending: false })
+        .order("store_id")
+        .order("payment_type");
+
+      if (storeId)   q = q.eq("store_id", storeId);
+      if (dateRange) q = q.eq("date_range", dateRange);
+
+      const { data, error } = await q.limit(1000);
+      if (error) return dbError(error.message);
+      if (!data?.length) return { content: [{ type: "text", text: "No payment type data found." }] };
+
+      // Pivot: for each store+date_range+payment_type, merge 'all' and 'fuel' rows
+      const map = new Map<string, Record<string, unknown>>();
+      for (const row of data) {
+        const key = `${row.store_id}|${row.date_range}|${row.payment_type}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            store_id: row.store_id,
+            date_range: row.date_range,
+            payment_type: row.payment_type,
+            all_tender: null,
+            fuel_tender: null,
+            inside_tender: null,
+          });
+        }
+        const entry = map.get(key)!;
+        if (row.sale_type === "all")  entry.all_tender  = row.tender_amount;
+        if (row.sale_type === "fuel") entry.fuel_tender = row.tender_amount;
+      }
+
+      // Calculate inside = all - fuel
+      for (const entry of map.values()) {
+        const all  = entry.all_tender  as number | null;
+        const fuel = entry.fuel_tender as number | null;
+        entry.inside_tender = (all != null && fuel != null) ? Math.round((all - fuel) * 100) / 100 : null;
+      }
+
+      const result = [...map.values()];
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
 }

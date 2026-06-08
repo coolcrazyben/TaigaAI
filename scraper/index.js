@@ -347,6 +347,34 @@ function productMerchBody(filter) {
   });
 }
 
+// ── Payment Type body (DataView 177, Widget 394 — all tenders) ───────────────
+// Same shape used for DataView 426 / Widget 1113 (fuel-only tenders).
+
+function paymentTypeBody(dataViewId, widgetId) {
+  const columns = [
+    { Field: "StoreId",          Label: "StoreId",          Function: true, FunctionType: "GroupByRequired" },
+    { Field: "StoreName",        Label: "StoreName",        Function: true, FunctionType: "GroupByRequired" },
+    { Field: "StoreIdentifier",  Label: "StoreIdentifier",  Function: true, FunctionType: "GroupByRequired" },
+    { Field: "TaigaPaymentType", Label: "TaigaPaymentType", Function: true, FunctionType: "GroupByRequired" },
+    { Field: "sum(TotalTenderAmount)",      Label: "TotalTenderAmount",      Function: true },
+    { Field: "sum(TotalAmountOfCollected)", Label: "TotalAmountOfCollected", Function: true },
+  ];
+  return (filter) => JSON.stringify({
+    WidgetId: widgetId,
+    Columns: columns,
+    FilterBy: "",
+    GroupBy: "StoreName, StoreId, StoreIdentifier, TaigaPaymentType",
+    OverrideQueryView: "",
+    OrderBy: "sum(TotalTenderAmount) desc",
+    Limit: 0,
+    Filter: filter,
+    StaticTimeDimension: "",
+  });
+}
+
+const paymentTypeAllBody  = paymentTypeBody(177, 394);   // all transactions
+const paymentTypeFuelBody = paymentTypeBody(426, 1113);  // fuel transactions only
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 async function batchRequest(dataViewId, bodyStr, filterObj) {
@@ -493,10 +521,22 @@ const BATCH = 100;
 
 async function batchUpsert(table, records, conflict) {
   if (!supabase) return 0;
+  // Deduplicate by conflict key across the full array before batching.
+  // Prevents "ON CONFLICT DO UPDATE command cannot affect row a second time"
+  // which fires when a single INSERT batch contains duplicate conflict keys.
+  const keyFields = conflict.split(",");
+  const seen = new Map();
+  for (const r of records) {
+    seen.set(keyFields.map(f => r[f]).join("|"), r);
+  }
+  const deduped = [...seen.values()];
+  if (deduped.length < records.length)
+    log(`  dedup ${table}: ${records.length} → ${deduped.length}`);
+
   let n = 0;
-  for (let i = 0; i < records.length; i += BATCH) {
-    const chunk = records.slice(i, i + BATCH);
-    const { error, data } = await supabase.from(table).upsert(chunk, { onConflict: conflict });
+  for (let i = 0; i < deduped.length; i += BATCH) {
+    const chunk = deduped.slice(i, i + BATCH);
+    const { error } = await supabase.from(table).upsert(chunk, { onConflict: conflict });
     if (error) log(`  WARN batch upsert ${table} [${i}-${i + chunk.length}]: ${error.message}`);
     else n += chunk.length;
   }
@@ -611,6 +651,29 @@ async function upsertMerchandiseProduct(rows, dateRange) {
   return batchUpsert("merchandise_product", records, "store_id,date_range,sku");
 }
 
+async function upsertPaymentType(rows, dateRange, saleType) {
+  if (!supabase) return 0;
+  let n = 0;
+  for (const r of rows) {
+    if (!r.storeName || !r.taigaPaymentType) continue;
+    const record = {
+      store_id:        slug(r.storeName),
+      date_range:      dateRange,
+      sale_type:       saleType,
+      payment_type:    String(r.taigaPaymentType).trim(),
+      taiga_store_id:  r.storeId ?? null,
+      tender_amount:   r.totalTenderAmount ?? null,
+      collected_amount: r.totalAmountOfCollected ?? null,
+    };
+    const { error } = await supabase
+      .from("payment_type_summary")
+      .upsert(record, { onConflict: "store_id,date_range,sale_type,payment_type" });
+    if (error) log(`  SKIP payment [${record.store_id}/${dateRange}/${saleType}/${record.payment_type}]: ${error.message}`);
+    else n++;
+  }
+  return n;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -627,7 +690,7 @@ async function run() {
   await fs.writeFile(path.join(DL_DIR, "stores.json"), JSON.stringify(stores, null, 2));
 
   const ranges  = monthRanges(MONTHS_BACK);
-  let txTotal = 0, dailyTotal = 0, merchTotal = 0, productTotal = 0;
+  let txTotal = 0, dailyTotal = 0, merchTotal = 0, productTotal = 0, paymentTotal = 0;
   const errors = [];
 
   for (const range of ranges) {
@@ -679,18 +742,40 @@ async function run() {
       const msg = `product [${range.key}]: ${e.message}`;
       log(`  ERROR: ${msg}`); errors.push(msg);
     }
+
+    // Payment type summary — monthly, all transactions by tender type
+    try {
+      const rows = await batchRequest(177, paymentTypeAllBody(filter), filter);
+      log(`  payment_all rows: ${rows.length}`);
+      await fs.writeFile(path.join(DL_DIR, `payment_all__${range.key}.json`), JSON.stringify(rows, null, 2));
+      paymentTotal += await upsertPaymentType(rows, range.key, "all");
+    } catch (e) {
+      const msg = `payment_all [${range.key}]: ${e.message}`;
+      log(`  ERROR: ${msg}`); errors.push(msg);
+    }
+
+    // Payment type summary — monthly, fuel transactions only
+    try {
+      const rows = await batchRequest(426, paymentTypeFuelBody(filter), filter);
+      log(`  payment_fuel rows: ${rows.length}`);
+      await fs.writeFile(path.join(DL_DIR, `payment_fuel__${range.key}.json`), JSON.stringify(rows, null, 2));
+      paymentTotal += await upsertPaymentType(rows, range.key, "fuel");
+    } catch (e) {
+      const msg = `payment_fuel [${range.key}]: ${e.message}`;
+      log(`  ERROR: ${msg}`); errors.push(msg);
+    }
   }
 
   if (supabase) {
     const { error: logErr } = await supabase.from("ingestion_log").insert({
-      files_processed: ranges.length * 4,
-      rows_inserted: txTotal + dailyTotal + merchTotal + productTotal,
+      files_processed: ranges.length * 6,
+      rows_inserted: txTotal + dailyTotal + merchTotal + productTotal + paymentTotal,
       rows_skipped: errors.length, errors: errors.join("\n") || null, duration_ms: Date.now() - t0,
     });
     if (logErr) log(`WARN ingestion_log: ${logErr.message}`);
   }
 
-  log(`\n═══ Done — tx:${txTotal} daily:${dailyTotal} merch:${merchTotal} product:${productTotal} errors:${errors.length} ═══`);
+  log(`\n═══ Done — tx:${txTotal} daily:${dailyTotal} merch:${merchTotal} product:${productTotal} payment:${paymentTotal} errors:${errors.length} ═══`);
   if (errors.length) process.exitCode = 1;
 }
 
