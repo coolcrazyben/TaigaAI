@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { BarChart3, Database, Upload, Fuel } from "lucide-react";
+import { BarChart3, Database, Upload, Fuel, Package } from "lucide-react";
 
 const nav = [
-  { href: "/",       label: "Connect",    icon: BarChart3 },
-  { href: "/upload", label: "Upload CSV", icon: Upload },
-  { href: "/data",   label: "Data",       icon: Database },
+  { href: "/",         label: "Connect",    icon: BarChart3 },
+  { href: "/upload",   label: "Upload CSV", icon: Upload },
+  { href: "/data",     label: "Data",       icon: Database },
+  { href: "/products", label: "Products",   icon: Package },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
