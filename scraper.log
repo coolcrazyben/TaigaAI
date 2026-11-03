@@ -3861,3 +3861,27 @@
 [2026-11-02T19:29:08.611Z]   payment_fuel rows: 55
 [2026-11-02T19:29:15.537Z] 
 ═══ Done — tx:20 daily:316 merch:5501 product:20685 payment:195 errors:0 ═══
+[2026-11-03T16:53:17.392Z] ═══ Prince Oil Taiga Scraper — Start ═══
+[2026-11-03T16:53:17.392Z] Authenticating via Playwright…
+[2026-11-03T16:53:20.446Z] Authenticated. Cookies: 0, Token: fa841c60…
+[2026-11-03T16:53:20.522Z] Stores (12): Newton Junction, Main Street Junction, Olde Towne Station (closed), Scooba Junction, Newton Crossing, Union Junction, Main Street Junction #2, Carthage Junction, Oxford Junction (closed), Macon Junction, Gluckstadt Junction, Sebastopol Junction
+[2026-11-03T16:53:24.378Z] 
+── 2026-11 (THISMONTH) ──
+[2026-11-03T16:53:24.636Z]   tx rows: 10
+[2026-11-03T16:53:26.845Z]   daily rows: 20
+[2026-11-03T16:53:26.847Z]   daily deduped: 20 → 20 rows
+[2026-11-03T16:53:27.592Z]   merch rows: 2158
+[2026-11-03T16:57:36.027Z]   product rows: 6249
+[2026-11-03T16:57:48.962Z]   payment_all rows: 56
+[2026-11-03T16:57:57.488Z]   payment_fuel rows: 43
+[2026-11-03T16:58:03.003Z] 
+── 2026-10 (LASTMONTH) ──
+[2026-11-03T16:58:05.131Z]   tx rows: 10
+[2026-11-03T16:58:06.391Z]   daily rows: 306
+[2026-11-03T16:58:06.395Z]   daily deduped: 306 → 306 rows
+[2026-11-03T16:58:08.403Z]   merch rows: 3961
+[2026-11-03T17:06:20.205Z]   product rows: 16934
+[2026-11-03T17:06:48.961Z]   payment_all rows: 69
+[2026-11-03T17:07:00.140Z]   payment_fuel rows: 55
+[2026-11-03T17:07:06.055Z] 
+═══ Done — tx:20 daily:326 merch:6110 product:23183 payment:223 errors:0 ═══
